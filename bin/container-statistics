@@ -1,0 +1,89 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require_relative "../lib/container_statistics"
+
+options = {
+  input: File.expand_path("../config/containers.yml", __dir__),
+  output: File.expand_path("../report/index.html", __dir__),
+  download_cache: File.expand_path("../.cache/downloads.json", __dir__),
+  download_report: false,
+  cve_report: false,
+  images: false,
+  vulnerability_reports: File.expand_path("../reports/vulnerabilities", __dir__)
+}
+
+OptionParser.new do |parser|
+  parser.banner = "Usage: bin/container-statistics [options]"
+  parser.on("-i", "--input PATH", "Container configuration (default: config/containers.yml)") do |path|
+    options[:input] = path
+  end
+  parser.on("-o", "--output PATH", "HTML report (default: report/index.html)") { |path| options[:output] = path }
+  parser.on("--download-cache PATH", "Download cache (default: .cache/downloads.json)") do |path|
+    options[:download_cache] = path
+  end
+  parser.on("--download-report", "Print a two-column download table instead of HTML") do
+    options[:download_report] = true
+  end
+  parser.on("--cve-report", "Print CVE counts by severity instead of HTML") do
+    options[:cve_report] = true
+  end
+  parser.on("--images", "Print the configured tag-specific image references") { options[:images] = true }
+  parser.on(
+    "--vulnerability-reports PATH",
+    "Trivy and Grype results (default: reports/vulnerabilities)"
+  ) do |path|
+    options[:vulnerability_reports] = path
+  end
+end.parse!
+
+begin
+  if options.values_at(:download_report, :cve_report).count(true) > 1
+    raise ContainerStatistics::Error, "--download-report and --cve-report cannot be used together"
+  end
+
+  containers = ContainerStatistics::Configuration.load_containers(options[:input])
+  if options[:images]
+    puts containers.flat_map(&:image_references)
+    exit
+  end
+
+  downloads = unless options[:cve_report]
+                client = ContainerStatistics::HttpClient.new
+                providers = [ContainerStatistics::Providers::GitHubContainerRegistry.new(client: client)]
+                provider_registry = ContainerStatistics::ProviderRegistry.new(providers)
+                download_cache = ContainerStatistics::FileCache.new(path: options[:download_cache], ttl: 24 * 60 * 60)
+                ContainerStatistics::Statistics::Downloads.new(providers: provider_registry, cache: download_cache)
+              end
+  vulnerabilities = unless options[:download_report]
+                      ContainerStatistics::Statistics::Vulnerabilities.new(
+                        report_dir: options[:vulnerability_reports]
+                      )
+                    end
+  results = containers.map do |container|
+    {
+      "image" => container.package_reference,
+      "statistics" => downloads ? [downloads.collect(container.package_reference)] : [],
+      "images" => vulnerabilities ? container.image_references.map do |image|
+        {"image" => image, "statistics" => [vulnerabilities.collect(image)]}
+      end : []
+    }
+  end
+  errors = ContainerStatistics::ResultErrors.collect(results)
+  if options[:cve_report]
+    print ContainerStatistics::CveReport.new(results).render
+  elsif options[:download_report]
+    print ContainerStatistics::TextReport.new(results).render
+  else
+    ContainerStatistics::Report.new(results).write(options[:output])
+    warn "Generated #{options[:output]} for #{results.length} container(s), with #{errors.length} error(s)."
+  end
+  unless errors.empty?
+    warn "Errors:"
+    errors.each { |error| warn "  - #{error}" }
+  end
+rescue ContainerStatistics::Error, OptionParser::ParseError => e
+  warn "Error: #{e.message}"
+  exit 1
+end

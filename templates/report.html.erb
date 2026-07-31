@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>container statistics</title>
+  <style><%= @stylesheet %></style>
+</head>
+<body>
+  <main>
+    <h1>container statistics</h1>
+    <p class="lede"><%= @results.length %> container package(s) · generated <%= h(@generated) %></p>
+
+    <section class="summary" aria-label="Summary">
+      <% statistics_by_key.each_value do |statistics| %>
+        <div>
+          <strong><%= number(statistics.sum { |statistic| statistic["value"].to_i }) %></strong>
+          <span>combined <%= h(statistics.first["label"].downcase) %></span>
+        </div>
+      <% end %>
+      <div><strong><%= @results.length %></strong><span>configured packages</span></div>
+    </section>
+
+    <div class="toolbar">
+      <input id="query" type="search" placeholder="Filter by container, CVE, package, version…"
+        aria-label="Filter report">
+      <select id="severity" aria-label="Severity">
+        <option value="">All severities</option>
+        <% ContainerStatistics::Statistics::Vulnerabilities::SEVERITIES.each do |severity| %>
+          <option value="<%= severity %>"><%= h(severity.capitalize) %></option>
+        <% end %>
+      </select>
+    </div>
+
+    <div id="containers">
+      <% @results.each do |result| %>
+        <section class="package" data-base-search="<%= h(package_search(result)) %>">
+          <h2><%= h(result["image"]) %></h2>
+
+          <div class="statistics package-statistics">
+            <% result["statistics"].each do |statistic| %>
+              <article class="statistic">
+                <div class="statistic-head">
+                  <div>
+                    <span class="provider"><%= h(statistic["provider"]) %></span>
+                    <h3>
+                      <% if statistic["url"] %>
+                        <a href="<%= h(statistic["url"]) %>"><%= h(statistic["label"]) %></a>
+                      <% else %>
+                        <%= h(statistic["label"]) %>
+                      <% end %>
+                    </h3>
+                  </div>
+                  <% unless statistic["value"].nil? %>
+                    <div class="metric-value">
+                      <strong><%= number(statistic["value"]) %></strong>
+                      <span><%= h(statistic["unit"]) %></span>
+                    </div>
+                  <% end %>
+                </div>
+                <% if statistic["error"] %>
+                  <p class="error"><%= h(statistic["error"]) %></p>
+                <% elsif statistic["details"] %>
+                  <details>
+                    <summary><%= h(statistic["details"]["label"]) %></summary>
+                    <div class="table-wrap"><table>
+                      <thead><tr>
+                        <% statistic["details"]["columns"].each do |column| %><th><%= h(column) %></th><% end %>
+                      </tr></thead>
+                      <tbody>
+                        <% statistic["details"]["rows"].each do |row| %><tr>
+                          <% row.each do |value| %>
+                            <td><%= value.is_a?(Numeric) ? number(value) : h(value) %></td>
+                          <% end %>
+                        </tr><% end %>
+                      </tbody>
+                    </table></div>
+                  </details>
+                <% end %>
+              </article>
+            <% end %>
+          </div>
+
+          <% unless result.fetch("images", []).empty? %>
+            <div class="image-variants">
+              <% result.fetch("images", []).each do |image| %>
+                <section class="image" data-image-search="<%= h(image["image"].downcase) %>">
+                  <h3><%= h(image_heading(image)) %></h3>
+                  <% image["statistics"].each do |statistic| %>
+                    <% if statistic["error"] %>
+                      <p class="error"><%= h(statistic["error"]) %></p>
+                    <% else %>
+                      <% statistic["sections"].each do |scanner| %>
+                        <details class="scanner">
+                          <summary class="scanner-head">
+                            <h4><%= h(scanner["label"]) %></h4>
+                            <div class="badges">
+                              <% scanner["counts"].each do |severity, count| %>
+                                <span class="badge <%= severity %>"><%= h(severity) %> <%= count %></span>
+                              <% end %>
+                              <% unless scanner["filtered_findings"].empty? %>
+                                <span class="filtered-count">
+                                  NVD/CPE filtered <%= scanner["filtered_findings"].length %>
+                                </span>
+                              <% end %>
+                            </div>
+                          </summary>
+                          <div class="scanner-content">
+                            <% if scanner["error"] %>
+                              <p class="error"><%= h(scanner["error"]) %></p>
+                            <% end %>
+                            <% if scanner["findings"].empty? %>
+                              <p class="empty">No confirmed findings.</p>
+                            <% else %>
+                              <%= findings_table(scanner["findings"]) %>
+                            <% end %>
+                            <% unless scanner["filtered_findings"].empty? %>
+                              <details class="filtered-findings">
+                                <summary>Filtered NVD/CPE matches (<%= scanner["filtered_findings"].length %>)</summary>
+                                <p class="filtered-note">
+                                  These broad CPE matches are unconfirmed for the distribution package and excluded
+                                  from scanner totals.
+                                </p>
+                                <%= findings_table(scanner["filtered_findings"]) %>
+                              </details>
+                            <% end %>
+                          </div>
+                        </details>
+                      <% end %>
+                    <% end %>
+                  <% end %>
+                </section>
+              <% end %>
+            </div>
+          <% end %>
+        </section>
+      <% end %>
+    </div>
+
+    <p id="empty" class="empty hidden">No container or finding matches this filter.</p>
+    <footer>Statistics and scanner results are snapshots. Validate vulnerability findings before remediation.</footer>
+  </main>
+  <script>
+    const query = document.getElementById("query");
+    const severity = document.getElementById("severity");
+    const packages = [...document.querySelectorAll(".package")];
+    const empty = document.getElementById("empty");
+    function render() {
+      const term = query.value.trim().toLowerCase();
+      const selectedSeverity = severity.value;
+      let visiblePackages = 0;
+      packages.forEach(packageElement => {
+        const packageMatches = !term || packageElement.dataset.baseSearch.includes(term);
+        let visibleFindings = 0;
+        packageElement.querySelectorAll(".finding").forEach(row => {
+          const termMatches = packageMatches || !term || row.dataset.search.includes(term);
+          const severityMatches = !selectedSeverity || row.dataset.severity === selectedSeverity;
+          const visible = termMatches && severityMatches;
+          row.classList.toggle("hidden", !visible);
+          if (visible) visibleFindings += 1;
+        });
+        packageElement.querySelectorAll(".scanner").forEach(scanner => {
+          const rows = [...scanner.querySelectorAll(".finding")];
+          const visible = !term && !selectedSeverity ||
+            rows.some(row => !row.classList.contains("hidden")) || scanner.querySelector(".error");
+          scanner.classList.toggle("hidden", !visible);
+        });
+        const visible = packageMatches && !selectedSeverity || visibleFindings > 0;
+        packageElement.classList.toggle("hidden", !visible);
+        if (visible) visiblePackages += 1;
+      });
+      empty.classList.toggle("hidden", visiblePackages !== 0);
+    }
+    query.addEventListener("input", render);
+    severity.addEventListener("change", render);
+  </script>
+</body>
+</html>

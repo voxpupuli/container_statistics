@@ -1,0 +1,5 @@
+---
+containers:
+  - name: example/service
+    registry: example.test
+    tags: []

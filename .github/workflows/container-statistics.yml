@@ -1,0 +1,132 @@
+name: Generate container statistics
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: Optional containers.yml content (overrides config/containers.yml)
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/container-statistics.yml"
+      - "assets/**"
+      - "bin/**"
+      - "config/containers.yml"
+      - "lib/**"
+      - "scripts/**"
+      - "templates/**"
+  schedule:
+    - cron: "37 4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Collect statistics and build report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      MANUAL_CONFIGURATION: ${{ inputs.configuration || '' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          ruby-version: "3.4"
+
+      - name: Restore download cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .cache/downloads.json
+          key: ${{ runner.os }}-container-downloads-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-container-downloads-
+
+      - name: Select container configuration
+        shell: bash
+        run: |
+          if [[ -n "${MANUAL_CONFIGURATION//[[:space:]]/}" ]]; then
+            printf '%s\n' "$MANUAL_CONFIGURATION" > "$RUNNER_TEMP/containers.yml"
+          else
+            cp config/containers.yml "$RUNNER_TEMP/containers.yml"
+          fi
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          cache: true
+          # renovate: datasource=github-tags depName=aquasecurity/trivy
+          version: v0.72.0
+
+      - name: Resolve Trivy command
+        id: trivy
+        shell: bash
+        run: echo "cmd=$(command -v trivy)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Grype
+        id: grype
+        uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          cache-db: true
+          # renovate: datasource=github-releases depName=anchore/grype
+          grype-version: v0.116.1
+
+      - name: Log in to a private registry
+        shell: bash
+        env:
+          REGISTRY: ${{ secrets.REGISTRY }}
+          REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
+          REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+        run: |
+          if [[ -z "$REGISTRY$REGISTRY_USERNAME$REGISTRY_PASSWORD" ]]; then
+            echo "No private registry credentials configured."
+          elif [[ -z "$REGISTRY" || -z "$REGISTRY_USERNAME" || -z "$REGISTRY_PASSWORD" ]]; then
+            echo "::error::Set REGISTRY, REGISTRY_USERNAME, and REGISTRY_PASSWORD together."
+            exit 1
+          else
+            printf '%s' "$REGISTRY_PASSWORD" |
+              docker login "$REGISTRY" --username "$REGISTRY_USERNAME" --password-stdin
+          fi
+
+      - name: Scan images
+        env:
+          TRIVY_COMMAND: ${{ steps.trivy.outputs.cmd }}
+          GRYPE_COMMAND: ${{ steps.grype.outputs.cmd }}
+        run: scripts/scan-images.sh "$RUNNER_TEMP/containers.yml" reports/vulnerabilities
+
+      - name: Build HTML report
+        run: |
+          bin/container-statistics \
+            --input "$RUNNER_TEMP/containers.yml" \
+            --output report/index.html
+          touch report/.nojekyll
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: report
+
+  deploy:
+    name: Deploy report
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

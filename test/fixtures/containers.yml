@@ -1,0 +1,14 @@
+---
+containers:
+  - name: example/service
+    registry: example.test
+    tags:
+      - "1.0"
+  - name: example/worker
+    registry: example.test
+    tags:
+      - "2.0"
+  - name: example/frontend
+    registry: example.test
+    tags:
+      - "3.0"

@@ -1,0 +1,48 @@
+---
+containers:
+  - name: openvoxproject/openbolt
+    registry: ghcr.io
+    tags:
+      - latest
+  - name: openvoxproject/openvoxagent
+    registry: ghcr.io
+    tags:
+      - latest
+  - name: openvoxproject/openvoxdb
+    registry: ghcr.io
+    tags:
+      - latest
+      - latest-alpine
+  - name: openvoxproject/openvoxserver
+    registry: ghcr.io
+    tags:
+      - latest
+      - latest-alpine
+  - name: voxpupuli/commitlint
+    registry: ghcr.io
+    tags:
+      - latest
+  - name: voxpupuli/onceover
+    registry: ghcr.io
+    tags:
+      - latest
+  - name: voxpupuli/r10k-webhook
+    registry: ghcr.io
+    tags:
+      - latest
+  - name: voxpupuli/r10k
+    registry: ghcr.io
+    tags:
+      - latest
+  - name: voxpupuli/renovate
+    registry: ghcr.io
+    tags:
+      - latest
+  - name: voxpupuli/semantic-release
+    registry: ghcr.io
+    tags:
+      - latest
+  - name: voxpupuli/voxbox
+    registry: ghcr.io
+    tags:
+      - latest
