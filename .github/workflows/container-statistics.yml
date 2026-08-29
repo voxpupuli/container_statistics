@@ -79,7 +79,7 @@ jobs:
         with:
           cache-db: true
           # renovate: datasource=github-releases depName=anchore/grype
-          grype-version: v0.116.1
+          grype-version: v0.118.0
 
       - name: Log in to a private registry
         shell: bash
