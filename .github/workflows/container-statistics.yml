@@ -75,7 +75,7 @@ jobs:
 
       - name: Install Grype
         id: grype
-        uses: anchore/scan-action/download-grype@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        uses: anchore/scan-action/download-grype@11983a512817154c80a9db660c1a184be7513ed6 # v7.4.3
         with:
           cache-db: true
           # renovate: datasource=github-releases depName=anchore/grype
